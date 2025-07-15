@@ -1,0 +1,5 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/rawTargets.cmake")
+find_package(Boost REQUIRED COMPONENTS json)
+find_package(OpenSSL REQUIRED)
