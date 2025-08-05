@@ -1,13 +1,16 @@
 #include <raw/cryptography/encrypt.hpp>
+#include <openssl/rsa.h>
+#include <openssl/hmac.h>
 #include <openssl/bio.h>
 #include <openssl/pem.h>
-#include <openssl/rsa.h>
 #include <openssl/evp.h>
 #include <openssl/types.h>
 #include <vector>
+#include <filesystem>
 #include <string>
 #include <stdexcept>
 #include <memory>
+#include <fstream>
 
 
 namespace raw::cryptography::encrypt {
@@ -15,15 +18,6 @@ namespace raw::cryptography::encrypt {
         using EVP_MD_CTX_ptr = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
         using EVP_PKEY_ptr = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
         
-        /**
-         * @brief RSA SHA256 signing algorithm using OpenSSL. If managing your
-         *   own EVP_PKEY be sure to remember to use EVP_PKEY_free to avoid mem
-         *   leaks.
-         * 
-         * @param data reference data to be signed
-         * @param pkey OpenSSL Private Key object
-         * @return std::vector<unsigned char> The signed data as bytes.
-         */
         std::vector<unsigned char> sha256(const std::string& data, EVP_PKEY* pkey) {
             EVP_MD_CTX_ptr ctx(EVP_MD_CTX_new(), EVP_MD_CTX_free);
             if (!ctx) throw std::runtime_error("Failed to create EVP_MD_CTX.");
@@ -52,30 +46,68 @@ namespace raw::cryptography::encrypt {
             return signature;
         }
 
-        /**
-         * @brief RSA SHA256 signing algorithm. Best use case if you only have
-         *   have access to your private key as a string, rather than a file. 
-         * 
-         * @param data reference data to be signed
-         * @param key full private key as a string (inlcude the --begin-- portion)
-         * @return std::vector<unsigned char> 
-         */
         std::vector<unsigned char> sha256(const std::string& data, const std::string& key) {
             EVP_PKEY_ptr pkey(loadPrivateKeyFromString(key.data(), key.size()), EVP_PKEY_free);
             return sha256(data, pkey.get());
         }
+        
+        std::vector<unsigned char> sha256(const std::string& data, const std::filesystem::path& path) {
+            EVP_PKEY_ptr pkey(loadPrivateKeyFromFile(path.c_str()), EVP_PKEY_free);
+            return sha256(data, pkey.get());
+        }
+
+
 
     } // namespace rsa
+
+    namespace hmac {
+        void sha256(const void* key, const int key_len, const unsigned char* data, const int data_len, unsigned char* out, unsigned int* out_len) {
+            auto evp_md = EVP_sha256();
+            auto result = *HMAC(
+                evp_md, // use this hash function
+                key, // use this key
+                key_len,
+                data, // start signing here
+                data_len, //num bytes to sign
+                out, // output
+                out_len //output len
+            );
+            if (!result) throw std::runtime_error("HMAC computation failed");
+        }
+
+        std::vector<unsigned char> sha256(const std::string& data, const std::string& key) {
+            unsigned int len = 32;
+            unsigned char output[32];
+            
+            sha256(key.data(), key.size(), reinterpret_cast<const unsigned char*>(data.data()), data.size(), output, &len);
+            return std::vector<unsigned char>(output,output + len);
+        }
+
+        std::vector<unsigned char> sha256(const std::string& data, const std::filesystem::path& path) {
+            unsigned int out_len = 32;
+            unsigned char output[32];
+            std::ifstream inFile(path, std::ios::binary | std::ios::ate);
+            if(!inFile.is_open()) {
+                throw std::runtime_error("Unable to open HMAC key file");
+            }
+            auto buf = inFile.rdbuf();
+            inFile.seekg(0, inFile.end);
+            int file_len = inFile.tellg();
+            inFile.seekg(0, inFile.beg);
+
+            char* buffer = new char[file_len];
+            if(!inFile.read(buffer, file_len)) {
+                throw std::runtime_error("Failed to read HMAC key file");
+            }
+            sha256(buffer, file_len, reinterpret_cast<const unsigned char*>(data.data()), data.size(), output, &out_len);
+            inFile.close();
+            std::vector<unsigned char> return_data = {output, output+out_len};
+            delete[] buffer;
+            return return_data;
+        }
+
+    } // end hmac
     
-    /**
-    * @brief Creates an OpenSSL private key object. The caller is
-    *   responsible for releasing the key (EVP_PKEY_free) to avoid mem
-    *   leaks.
-    * 
-    * @param key the private key.
-    * @param len length of key
-    * @return EVP_PKEY* OpenSSL private key object
-    */
     EVP_PKEY* loadPrivateKeyFromString(const char key[], const int len) {
         BIO* bio = BIO_new_mem_buf(key, len);
         if (!bio) {
@@ -92,13 +124,6 @@ namespace raw::cryptography::encrypt {
         return pKey;
     }
 
-    /**
-    * @brief Grab your private key from a file and return it as structured
-    *   data.
-    * 
-    * @param filePath c string (null terminated) file path.
-    * @return EVP_PKEY* OpenSSL private key object
-    */
     EVP_PKEY* loadPrivateKeyFromFile(const char* filePath) {
         // Open the PEM file
         FILE* file = fopen(filePath, "r");

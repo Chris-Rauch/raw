@@ -15,6 +15,7 @@
 
 #include <boost/json.hpp>
 
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 
@@ -32,11 +33,14 @@ public:
    * @brief Create and return the fully formed token as a string. This includes
    *   token signature and proper encoding. Ready for transmission.
    * 
-   * @param alg Cryptographic algorithm to sign the token.
+   * @param alg Cryptographic algorithm to sign the token. 
+   *   Currently support s
+   *      1) RS256 - key should be a file path
+   *      2) HS256 - key should be the actualy key, loaded in memory
    * @param key Private key to sign the data.
    * @return std::string 
    */
-  virtual std::string token(const std::string& alg = "", const std::string& key = "") const = 0;
+  virtual std::string token(const std::string& alg, const std::filesystem::path& keyPath) = 0;
 
   /**
    * @brief Sign token and return just the signature.
@@ -45,7 +49,7 @@ public:
    * @param key Private key to sign the data.
    * @return std::string 
    */
-  virtual std::string sign(const std::string& alg, const std::string& key) = 0;
+  virtual std::string sign(const std::string& alg, const std::filesystem::path& keyPath) = 0;
 
   /**
    * @brief Converts token string back into structured data. Overwrites any 
@@ -93,13 +97,14 @@ public:
   * @param pKey Private key as a string.
   * @return std::string 
   */
-  std::string sign(const std::string& alg, const std::string& pkey);
-  std::string token(const std::string& alg, const std::string& pkey) const;
+  std::string sign(const std::string& alg, const std::filesystem::path& keyPath);
+  std::string token(const std::string& alg, const std::filesystem::path& keyPath);
   bool verify(const std::string& alg, const std::string& key); // TODO
 
 private:
   bool isExpired() const; //TODO
   bool isValid() const; //TODO
+  std::string _getEncodedPayload() const;
 
 private:
   JSON header_;

@@ -1,7 +1,9 @@
+#include <filesystem>
+#include <openssl/evp.h>
 #include <raw/cryptography/hash.hpp>
 #include <raw/encode/encode.hpp>
 #include <raw/cryptography/encrypt.hpp>
-#include <raw/http//token.hpp>
+#include <raw/http/token.hpp>
 #include <raw/types/conversions.hpp>
 #include <stdexcept>
 #include <string>
@@ -46,54 +48,42 @@ void JWT::parse(const std::string& token) {
 }
 
 
-std::string JWT::sign(const std::string& alg, const std::string& pKey) {
+std::string JWT::sign(const std::string& alg, const std::filesystem::path& keyPath) {
   std::vector<unsigned char> signature;
+  std::string payload = _getEncodedPayload();
 
-  // convert the json/map object into a string
-  std::string header = raw::types::conversions::mapToJsonString(header_);
-  std::string claims = raw::types::conversions::mapToJsonString(claims_);
-
-  // encode the strings and concatenate
-  std::string encodedHeader = raw::cryptography::encode::base64url_encode(header);
-  std::string encodedClaims = raw::cryptography::encode::base64url_encode(claims);
-  std::string payload = encodedHeader + '.' + encodedClaims;
-
-  // sign
+  // hash and sign
   if(alg == "RS256") {
-    // hash and sign
-    signature = raw::cryptography::encrypt::rsa::sha256(payload, pKey);
-  }
-  else {
+    signature = raw::cryptography::encrypt::rsa::sha256(payload, keyPath);
+  } else if(alg == "HS256") {
+    signature = raw::cryptography::encrypt::hmac::sha256(payload, keyPath);
+  } else {
     throw std::invalid_argument("Unsupported hashing algorith: " + alg);
   }
 
   auto encodedSignature = raw::cryptography::encode::base64url_encode(signature);
-  std::string signatureStr(signature.begin(), signature.end());
+  this->signature_ = std::string(signature.begin(), signature.end());
+  
   return this->signature_;
 }
 
-/* Returns a complete JWT with UTF-8 serialization and Base64Url encoded.
- *
-*/
-std::string JWT::token(const std::string& alg = "", const std::string& pkey = "") const {
-  std::vector<unsigned char> signature;
+std::string JWT::token(const std::string& alg, const std::filesystem::path& keyPath) {
+  sign(alg, keyPath);
+  std::string payload = _getEncodedPayload();
+  return payload + '.' + raw::cryptography::encode::base64url_encode(signature_);
+}
 
+std::string JWT::_getEncodedPayload() const {
   // convert the json/map object into a string
-  std::string header = raw::types::conversions::mapToJsonString(header_);
-  std::string claims = raw::types::conversions::mapToJsonString(claims_);
+  const std::string header = raw::types::conversions::mapToJsonString(header_);
+  const std::string claims = raw::types::conversions::mapToJsonString(claims_);
 
   // encode the strings and concatenate
-  std::string encodedHeader = raw::cryptography::encode::base64url_encode(header);
-  std::string encodedClaims = raw::cryptography::encode::base64url_encode(claims);
-  std::string payload = encodedHeader + '.' + encodedClaims;
-
-  // hash and sign
-  signature = raw::cryptography::encrypt::rsa::sha256(payload, pkey);
-
-  std::string signatureStr(signature.begin(), signature.end());
-
-  return encodedHeader + '.' + encodedClaims + '.' + raw::cryptography::encode::base64url_encode(signatureStr);
+  const std::string encodedHeader = raw::cryptography::encode::base64url_encode(header);
+  const std::string encodedClaims = raw::cryptography::encode::base64url_encode(claims);
+  return encodedHeader + '.' + encodedClaims;
 }
+  
 bool JWT::verify(const std::string& alg, const std::string& key) {
   throw std::runtime_error("Verify token not implemented");
 }
